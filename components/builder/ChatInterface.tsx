@@ -1,37 +1,70 @@
 'use client';
 import { useState } from 'react';
-import { Send } from 'lucide-react';
+import { Send, Download, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 type Props = {
   projectId: string;
+  projectName: string;
   history: any[];
-  onNewChanges: (changes: any[]) => void;
+  currentCode: string;
+  onCodeUpdate: (code: string) => void;
 };
 
-export default function ChatInterface({ projectId, history, onNewChanges }: Props) {
+export default function ChatInterface({ projectId, projectName, history, currentCode, onCodeUpdate }: Props) {
   const [message, setMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [messages, setMessages] = useState(history);
 
   const sendMessage = async () => {
     if (!message.trim() || isLoading) return;
-
     setIsLoading(true);
-    const userMsg = { id: Date.now().toString(), role: 'user' as const, content: message, timestamp: new Date().toISOString() };
+
+    const userMsg = {
+      id: Date.now().toString(),
+      role: 'user' as const,
+      content: message,
+      timestamp: new Date().toISOString()
+    };
+
     setMessages(prev => [...prev, userMsg]);
 
-    const res = await fetch('/api/chat', {
+    // 1. Chat
+    const chatRes = await fetch('/api/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ projectId, message, history: messages })
     });
+    const chatData = await chatRes.json();
 
-    const data = await res.json();
-    setMessages(prev => [...prev, { ...data, role: 'assistant', timestamp: new Date().toISOString() }]);
-    onNewChanges(data.changes || []);
+    // 2. Generate code
+    const genRes = await fetch('/api/generate', {
+      method: 'POST',
+      body: JSON.stringify({ projectId, prompt: message, history: messages })
+    });
+    const genData = await genRes.json();
+
+    const assistantMsg = {
+      id: (Date.now() + 1).toString(),
+      role: 'assistant' as const,
+      content: chatData.content || genData.message,
+      timestamp: new Date().toISOString(),
+      changes: chatData.changes
+    };
+
+    setMessages(prev => [...prev, assistantMsg]);
+    onCodeUpdate(genData.html);
     setMessage('');
     setIsLoading(false);
+  };
+
+  const exportProject = () => {
+    const blob = new Blob([currentCode || '<h1>No code yet</h1>'], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${projectName.replace(/\s+/g, '-')}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -43,14 +76,7 @@ export default function ChatInterface({ projectId, history, onNewChanges }: Prop
               "max-w-[80%] rounded-2xl px-5 py-4",
               msg.role === 'user' ? 'bg-emerald-600' : 'bg-zinc-900 border border-zinc-800'
             )}>
-              <p className="whitespace-pre-wrap">{msg.content}</p>
-              {msg.changes && msg.changes.length > 0 && (
-                <div className="mt-4 text-xs opacity-75">
-                  {msg.changes.map((c: any, i: number) => (
-                    <div key={i}>• {c.type} → {c.file}</div>
-                  ))}
-                </div>
-              )}
+              <p>{msg.content}</p>
             </div>
           </div>
         ))}
@@ -63,20 +89,16 @@ export default function ChatInterface({ projectId, history, onNewChanges }: Prop
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-            placeholder="Describe changes... (e.g. Add user authentication with Google)"
-            className="flex-1 bg-zinc-800 border border-zinc-700 rounded-xl px-5 py-4 focus:outline-none focus:border-emerald-500"
+            placeholder="What should we build or change? (e.g. Add a booking calendar)"
+            className="flex-1 bg-zinc-800 border border-zinc-700 rounded-2xl px-5 py-4 focus:outline-none"
           />
-          <button
-            onClick={sendMessage}
-            disabled={isLoading}
-            className="bg-emerald-600 hover:bg-emerald-500 px-8 rounded-xl disabled:opacity-50"
-          >
+          <button onClick={sendMessage} disabled={isLoading} className="bg-emerald-600 px-6 rounded-2xl">
             <Send size={20} />
           </button>
+          <button onClick={exportProject} className="border border-zinc-700 px-6 rounded-2xl hover:bg-zinc-800">
+            <Download size={20} />
+          </button>
         </div>
-        <p className="text-xs text-zinc-500 mt-2 text-center">
-          Changes are previewed before applying • Full history kept
-        </p>
       </div>
     </div>
   );
